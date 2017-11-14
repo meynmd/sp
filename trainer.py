@@ -1,28 +1,19 @@
 import random
 from copy import deepcopy
-import numpy as np
 from collections import defaultdict
+import matplotlib.pyplot as plt
 from tagger import *
 
-def train_perceptron(filename, dictionary, model=None):
-    if model is None:
-        model = defaultdict(float)
-    else:
-        model = deepcopy(model)
+num_epochs = 15
 
-    xys = [xy for xy in readfile(filename)]
-    random.shuffle(xys)
-    for x, y in xys:
-        z = decode(x, dictionary, model)
-        if z != y:
-            for i, w in enumerate(x):
-                if z[i] != y[i]:
-                    if i > 0:
-                        model[z[i - 1], z[i]] -= 1.
-                        model[y[i - 1], y[i]] += 1.
-                    model[z[i], w] -= 1.
-                    model[y[i], w] += 1.
-    return model
+def update(model, x, z, y):
+    for i, word in enumerate(x):
+        if z[i] != y[i]:
+            if i > 0:
+                model[z[i - 1], z[i]] -= 1.
+                model[y[i - 1], y[i]] += 1.
+            model[z[i], word] -= 1.
+            model[y[i], word] += 1.
 
 
 def update_avgd(model, model_avg, x, z, y, c):
@@ -43,7 +34,7 @@ def update_avgd(model, model_avg, x, z, y, c):
             model_avg[y[i], word] += c
 
 
-def train_avg_perceptron(filename, dictionary, model=None, model_avg=None, c=0):
+def train_epoch(filename, dictionary, model=None, model_avg=None, c=None):
     if model is None:
         model, model_avg = defaultdict(float), defaultdict(float)
     else:
@@ -51,31 +42,74 @@ def train_avg_perceptron(filename, dictionary, model=None, model_avg=None, c=0):
 
     xys = [xy for xy in readfile(filename)]
     random.shuffle(xys)
+    updates = 0
     for x, y in xys:
+        if c is not None:
+            c += 1
         z = decode(x, dictionary, model)
         if z != y:
-            # for i, w in enumerate(x):
-            #     if z[i] != y[i]:
-            #         if i > 0:
-            #             # update w_0
-            #             model[z[i - 1], z[i]] -= 1.
-            #             model[y[i - 1], y[i]] += 1.
-            #             # update w_a
-            #             model_avg[z[i - 1], z[i]] -= c
-            #             model_avg[y[i - 1], y[i]] += c
-            #         # update w_0
-            #         model[z[i], w] -= 1.
-            #         model[y[i], w] += 1.
-            #         # update w_a
-            #         model_avg[z[i], w] -= c
-            #         model_avg[y[i], w] += c
-            update_avgd(model, model_avg, x, z, y, c)
-        c += 1
+            updates += 1
+            if c is None:
+                update(model, x, z, y)
+            else:
+                update_avgd(model, model_avg, x, z, y, c)
 
-    model_final = deepcopy(model)
-    for k in model_final:
-        model_final[k] -= model_avg[k] / float(c)
-    return model, model_avg, model_final, c
+    if c is None:
+        return model, updates
+    else:
+        model_final = deepcopy(model)
+        for k in model_final:
+            model_final[k] -= model_avg[k] / float(c)
+        return model, updates, model_avg, model_final, c
+
+
+def run_training(trainfile, devfile, dictionary, averaged=False, plot=True):
+    model, model_avg, model_final, best_model = None, None, None, None
+    c, best_epoch = 0, 0
+    tr_err, dev_err, models = [], [], []
+    least_err = float('inf')
+    for i in range(num_epochs):
+        if averaged:
+            model, updates, model_avg, model_final, c = train_epoch(
+                trainfile, dictionary, model, model_avg, c)
+        else:
+            model_final, updates = train_epoch(trainfile, dictionary, model)
+
+        # if best_model is None:
+        #     best_model = model_final
+        #     best_epoch = i + 1
+
+        models.append(model_final)
+        tr_err.append(test(trainfile, dictionary, model_final))
+        dev_err.append(test(devfile, dictionary, model_final))
+        print "epoch {0:2}\tupdates: {1:3}\t".format(i + 1, updates),
+        print "train err: {0:.2%}\tdev err: {1:.2%}".format(tr_err[-1], dev_err[-1])
+
+        # if dev_err < least_err:
+        #     best_model = model_final
+        #     least_err = dev_err
+        #     best_epoch = i + 1
+
+    # return least_err, best_model, best_epoch
+    return tr_err, dev_err, models
+
+def train_and_report(trainfile, devfile, dictionary, averaged=False):
+    print "-"*80
+    if averaged:
+        print "Averaged",
+    print "Perceptron\nTraining..."
+
+    # d_err, best_model, best_epoch = run_training(trainfile, devfile, dictionary, averaged)
+    tr_err, dev_err, models = run_training(trainfile, devfile, dictionary, averaged)
+    best_epoch = min([i for i in range(len(dev_err))], key=lambda x : dev_err[x])
+    best_model = models[best_epoch]
+    final_err = test(devfile, dictionary, best_model)
+
+    print "\nbest epoch: {}".format(best_epoch + 1)
+    print "final dev err {0:.2%}".format(final_err)
+    print "-"*80 + "\n"
+
+    return tr_err, dev_err
 
 
 if __name__ == "__main__":
@@ -87,27 +121,13 @@ if __name__ == "__main__":
     trainfile, devfile = sys.argv[1:3]
     dictionary, blah = mle(trainfile)
 
-    model, model_avg, model_final, best_model = None, None, None, None
-    c, best_epoch = 0, 0
-    least_err = float('inf')
-    for i in range(5):
-        if average:
-            model, model_avg, model_final, c = train_avg_perceptron(
-                trainfile, dictionary, model, model_avg, c)
-        else:
-            model_final = train_perceptron(trainfile, dictionary, model)
-        if best_model is None:
-            best_model = model_final
-            best_epoch = i + 1
-        tr_err = test(trainfile, dictionary, model_final)
-        dev_err = test(devfile, dictionary, model_final)
-        print "epoch {0:2}\t".format(i + 1),
-        print "train_err {0:.2%}\tdev_err {1:.2%}".format(tr_err, dev_err)
-        if dev_err < least_err:
-            best_model = model_final
-            least_err = dev_err
-            best_epoch = i + 1
+    tr_err, dev_err = train_and_report(trainfile, devfile, dictionary, False)
+    avg_tr_err, avg_dev_err = train_and_report(trainfile, devfile, dictionary, True)
 
-    d_err = test(devfile, dictionary, best_model)
-    print "\nbest epoch: {}".format(best_epoch)
-    print "dev_err {0:.2%}".format(d_err)
+    epochs = len(tr_err)
+    plt.plot( range( epochs ), tr_err )
+    plt.plot( range( epochs ), dev_err )
+    plt.plot( range( epochs ), avg_tr_err )
+    plt.plot( range( epochs ), avg_dev_err )
+    plt.legend( ('Perc. Training', 'Perc. Dev', 'Avg. Training', 'Avg. Dev'), numpoints = 1)
+    plt.show()
