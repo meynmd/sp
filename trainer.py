@@ -4,14 +4,17 @@ from collections import defaultdict
 import matplotlib.pyplot as plt
 from tagger import *
 
-num_epochs = 15
+num_epochs = 5
 
-def update(model, x, z, y):
+def update(model, x, z, y, gram=2, w_range=(0, 0)):
     for i, word in enumerate(x):
         if z[i] != y[i]:
-            if i > 0:
-                model[z[i - 1], z[i]] -= 1.
-                model[y[i - 1], y[i]] += 1.
+            if i >= gram - 1:
+                zgram = tuple([z[i - j] for j in range(gram - 1, -1, -1)])
+                ygram = tuple([y[i - j] for j in range(gram - 1, -1, -1)])
+                model[zgram] -= 1.
+                model[ygram] += 1.
+
             model[z[i], word] -= 1.
             model[y[i], word] += 1.
 
@@ -34,7 +37,7 @@ def update_avgd(model, model_avg, x, z, y, c):
             model_avg[y[i], word] += c
 
 
-def train_epoch(filename, dictionary, model=None, model_avg=None, c=None):
+def train_epoch(filename, dictionary, model=None, model_avg=None, c=None, gram=2):
     if model is None:
         model, model_avg = defaultdict(float), defaultdict(float)
     else:
@@ -46,11 +49,11 @@ def train_epoch(filename, dictionary, model=None, model_avg=None, c=None):
     for x, y in xys:
         if c is not None:
             c += 1
-        z = decode(x, dictionary, model)
+        z = decode(x, dictionary, model, gram)
         if z != y:
             updates += 1
             if c is None:
-                update(model, x, z, y)
+                update(model, x, z, y, gram)
             else:
                 update_avgd(model, model_avg, x, z, y, c)
 
@@ -63,7 +66,7 @@ def train_epoch(filename, dictionary, model=None, model_avg=None, c=None):
         return model, updates, model_avg, model_final, c
 
 
-def run_training(trainfile, devfile, dictionary, averaged=False, plot=True):
+def run_training(trainfile, devfile, dictionary, averaged=False, gram=2, plot=True):
     model, model_avg, model_final, best_model = None, None, None, None
     c, best_epoch = 0, 0
     tr_err, dev_err, models = [], [], []
@@ -73,7 +76,7 @@ def run_training(trainfile, devfile, dictionary, averaged=False, plot=True):
             model, updates, model_avg, model_final, c = train_epoch(
                 trainfile, dictionary, model, model_avg, c)
         else:
-            model_final, updates = train_epoch(trainfile, dictionary, model)
+            model_final, updates = train_epoch(trainfile, dictionary, model, gram=gram)
 
         # if best_model is None:
         #     best_model = model_final
@@ -93,14 +96,15 @@ def run_training(trainfile, devfile, dictionary, averaged=False, plot=True):
     # return least_err, best_model, best_epoch
     return tr_err, dev_err, models
 
-def train_and_report(trainfile, devfile, dictionary, averaged=False):
+
+def train_and_report(trainfile, devfile, dictionary, averaged=False, gram=2):
     print "-"*80
     if averaged:
         print "Averaged",
     print "Perceptron\nTraining..."
 
     # d_err, best_model, best_epoch = run_training(trainfile, devfile, dictionary, averaged)
-    tr_err, dev_err, models = run_training(trainfile, devfile, dictionary, averaged)
+    tr_err, dev_err, models = run_training(trainfile, devfile, dictionary, averaged, gram)
     best_epoch = min([i for i in range(len(dev_err))], key=lambda x : dev_err[x])
     best_model = models[best_epoch]
     final_err = test(devfile, dictionary, best_model)
@@ -115,19 +119,22 @@ def train_and_report(trainfile, devfile, dictionary, averaged=False):
 if __name__ == "__main__":
     average = False
     if len( sys.argv ) > 3:
-        if sys.argv[3] == '-a':
-            average = True
+        if sys.argv[3] == '-p':
+            plot = True
+    else:
+        plot = False
 
     trainfile, devfile = sys.argv[1:3]
     dictionary, blah = mle(trainfile)
 
-    tr_err, dev_err = train_and_report(trainfile, devfile, dictionary, False)
-    avg_tr_err, avg_dev_err = train_and_report(trainfile, devfile, dictionary, True)
-
+    tr_err, dev_err = train_and_report(trainfile, devfile, dictionary, False, gram=2)
+    avg_tr_err, avg_dev_err = train_and_report(trainfile, devfile, dictionary, True, gram=2)
+    avg_tr_err, avg_dev_err = [0 for i in range(len(tr_err))], [0 for i in range(len(tr_err))]
     epochs = len(tr_err)
     plt.plot( range( epochs ), tr_err )
     plt.plot( range( epochs ), dev_err )
     plt.plot( range( epochs ), avg_tr_err )
     plt.plot( range( epochs ), avg_dev_err )
     plt.legend( ('Perc. Training', 'Perc. Dev', 'Avg. Training', 'Avg. Dev'), numpoints = 1)
-    plt.show()
+    if plot:
+        plt.show()
