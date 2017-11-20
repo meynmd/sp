@@ -39,12 +39,13 @@ def update_avgd(model, model_avg, x, z, y, c):
 
 def train_epoch(filename, dictionary, model=None, model_avg=None, c=None, gram=2):
     if model is None:
+        print 'initialize model'
         model, model_avg = defaultdict(float), defaultdict(float)
     else:
         model = deepcopy(model)
 
     xys = [xy for xy in readfile(filename)]
-    random.shuffle(xys)
+    # random.shuffle(xys)
     updates = 0
     for x, y in xys:
         if c is not None:
@@ -71,6 +72,7 @@ def run_training(trainfile, devfile, dictionary, averaged=False, gram=2, plot=Tr
     c, best_epoch = 0, 0
     tr_err, dev_err, models = [], [], []
     least_err = float('inf')
+    updates = 0
     for i in range(num_epochs):
         if averaged:
             model, updates, model_avg, model_final, c = train_epoch(
@@ -117,6 +119,7 @@ def train_and_report(trainfile, devfile, dictionary, averaged=False, gram=2):
 
 
 if __name__ == "__main__":
+    random.seed(2)
     average = False
     if len( sys.argv ) > 3:
         if sys.argv[3] == '-p':
