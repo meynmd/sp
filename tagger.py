@@ -43,7 +43,7 @@ def mle(filename): # Max Likelihood Estimation of HMM
     return dictionary, model
 
 
-def my_decode_var_gram(words, dictionary, model, gram=3):
+def my_decode_var_gram(words, dictionary, model, gram=3, w_range=(0, 1)):
     pi = defaultdict(lambda : float("-inf"))
     bp = {}
     words = [startsym] + words + [stopsym]
@@ -58,14 +58,20 @@ def my_decode_var_gram(words, dictionary, model, gram=3):
                 return tscore
         return tscore
 
-    pi[(0,) + tuple([startsym for g in range(gram - 1)])] = 1.
-    for ngram in product(*[list(dictionary[w]) for w in words[1:gram]]):
-        pi[(gram-1,) + ngram] = get_trans_score(ngram) + model[ngram[-1], words[gram-1]]
+    def get_e_score(tag, k):
+        escore = 0.
+        for begin in range(w_range[0], 1):
+            for end in range(w_range[1], 0, -1):
+                escore = model[tuple([tag] + words[k+begin : k+end])]
+                if escore != 0.:
+                    return escore
+        return escore
+
 
     def update_pi(k, tags):
         optimal = None
         for t in dictionary[words[k - gram + 1]]:
-            score = pi[(k-1, t) + tags[:-1]] + get_trans_score((t,) + tags) + model[tags[-1], words[k]]
+            score = pi[(k-1, t) + tags[:-1]] + get_trans_score((t,) + tags) + get_e_score(tags[-1], k) #model[tags[-1], words[k]]
             if score > pi[(k,) + tags]:
                 optimal = t
                 pi[(k,) + tags] = score
@@ -76,6 +82,10 @@ def my_decode_var_gram(words, dictionary, model, gram=3):
             return list(prev_tags)
         return backtrack(i-1, (bp[(i,) + prev_tags],) + prev_tags[:-1]) + [prev_tags[-1]]
 
+    pi[(0,) + tuple([startsym for g in range(gram - 1)])] = 1.
+    for ngram in product(*[list(dictionary[w]) for w in words[1:gram]]):
+        pi[(gram-1,) + ngram] = get_trans_score(ngram) + model[ngram[-1], words[gram-1]]
+
     for i, word in enumerate(words[gram:], gram):
         for seq in product(*[dictionary[w] for w in words[i - gram + 2 : i + 1]]):
             bp[(i,) + seq] = update_pi( i, seq )
@@ -85,11 +95,11 @@ def my_decode_var_gram(words, dictionary, model, gram=3):
     return backtrack(len(words)-1, last)[:-1]
 
 
-def test(filename, dictionary, model, gram=2):
+def test(filename, dictionary, model, gram=2, w_range=(0,1)):
     errors = tot = 0
     for words, tags in readfile(filename):
         # mytags = liangs_decode(words, dictionary, model, gram)
-        mytags = my_decode_var_gram(words, dictionary, model, gram)
+        mytags = my_decode_var_gram(words, dictionary, model, gram, w_range)
         errors += sum(t1!=t2 for (t1,t2) in zip(tags, mytags))
         tot += len(words) 
         
