@@ -4,13 +4,15 @@ from __future__ import division
 from collections import defaultdict
 import sys
 from math import log
+from itertools import product
 startsym, stopsym = "<s>", "</s>"
 
 def readfile(filename):
     for line in open(filename):
         wordtags = map(lambda x: x.rsplit("/", 1), line.split())
         yield [w for w,t in wordtags], [t for w,t in wordtags] # (word_seq, tag_seq) pair
-    
+
+
 def mle(filename): # Max Likelihood Estimation of HMM
     twfreq = defaultdict(lambda : defaultdict(int))
     ttfreq = defaultdict(lambda : defaultdict(int)) 
@@ -40,55 +42,70 @@ def mle(filename): # Max Likelihood Estimation of HMM
         
     return dictionary, model
 
-def decode(words, dictionary, model, gram=2):
 
-    def backtrack(i, tag):
-        if i == 0:
-            return []
-        return backtrack(i-1, back[i][tag]) + [tag]
-
+def my_decode_var_gram(words, dictionary, model, gram=3):
+    pi = defaultdict(lambda : float("-inf"))
+    bp = {}
     words = [startsym] + words + [stopsym]
+    if len(words) < gram:
+        gram = len(words)
 
-    best = defaultdict(lambda: defaultdict(lambda: float("-inf")))
-    best[0][startsym] = 1
-    back = defaultdict(dict)
+    def get_trans_score(tags):
+        tscore = 0.
+        for j in range(len(tags)):
+            tscore = model[tags[j:]]
+            if tscore != 0.:
+                return tscore
+        return tscore
 
-    for i, word in enumerate(words[1:], 1):
-        for tag in dictionary[word]:
-            if gram == 2:
-                for prev in best[i-1]:
-                    score = best[i-1][prev] + model[prev, tag] + model[tag, word]
-                    if score > best[i][tag]:
-                        best[i][tag] = score
-                        back[i][tag] = prev
-            elif gram == 3:
-                if i == 1:
-                    best[i][startsym, tag] = 1.
-                    back[1][tag] = '</s>'
-                    continue
-                for prev in best[i-1]:
-                    for prev_prev in best[i-2]:
-                        score = best[i-1][prev_prev, prev] + model[prev_prev, prev, tag] + model[tag, word]
-                        if score > best[i][prev, tag]:
-                            best[i][prev, tag] = score
-                            back[i][tag] = prev
+    pi[(0,) + tuple([startsym for g in range(gram - 1)])] = 1.
+    for ngram in product(*[list(dictionary[w]) for w in words[1:gram]]):
+        pi[(gram-1,) + ngram] = get_trans_score(ngram) + model[ngram[-1], words[gram-1]]
 
-    mytags = backtrack(len(words)-1, stopsym)[:-1]
-    #print " ".join("%s/%s" % wordtag for wordtag in mywordtags)
-    return mytags
+    def update_pi(k, tags):
+        optimal = None
+        for t in dictionary[words[k - gram + 1]]:
+            score = pi[(k-1, t) + tags[:-1]] + get_trans_score((t,) + tags) + model[tags[-1], words[k]]
+            if score > pi[(k,) + tags]:
+                optimal = t
+                pi[(k,) + tags] = score
+        return optimal
 
-def test(filename, dictionary, model):
+    def backtrack(i, prev_tags):
+        if i == gram - 1:
+            return list(prev_tags)
+        return backtrack(i-1, (bp[(i,) + prev_tags],) + prev_tags[:-1]) + [prev_tags[-1]]
+
+    for i, word in enumerate(words[gram:], gram):
+        for seq in product(*[dictionary[w] for w in words[i - gram + 2 : i + 1]]):
+            bp[(i,) + seq] = update_pi( i, seq )
+
+    last = max(product(*[list(dictionary[w]) for w in words[-gram+1:]]),
+               key=lambda s : pi[(len(words)-1,) + s])
+    return backtrack(len(words)-1, last)[:-1]
+
+
+def test(filename, dictionary, model, gram=2):
     errors = tot = 0
     for words, tags in readfile(filename):
-        mytags = decode(words, dictionary ,model)
+        # mytags = liangs_decode(words, dictionary, model, gram)
+        mytags = my_decode_var_gram(words, dictionary, model, gram)
         errors += sum(t1!=t2 for (t1,t2) in zip(tags, mytags))
         tot += len(words) 
         
     return errors/tot
-        
+
+
 if __name__ == "__main__":
     trainfile, devfile = sys.argv[1:3]
     dictionary, model = mle(trainfile)
+    dictionary[startsym].add(startsym)
+    dictionary[stopsym].add(stopsym)
 
-    print "train_err {0:.2%}".format(test(trainfile, dictionary, model))
-    print "dev_err {0:.2%}".format(test(devfile, dictionary, model))
+    # print "train_err {0:.2%}".format(test(trainfile, dictionary, model))
+    # print "dev_err {0:.2%}".format(test(devfile, dictionary, model))
+
+    for words, tags in readfile(devfile):
+        print words
+        print my_decode(words, dictionary, model, 3)
+        print liangs_decode(words, dictionary, model)
